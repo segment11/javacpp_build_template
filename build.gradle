@@ -1,0 +1,90 @@
+plugins {
+    id 'java'
+}
+
+final String mainClassName = 'MyLib'
+// change here, h == hpp
+String cppH = 'cpp_proj/library.h'
+
+def osName = System.properties['os.name'].toString().replaceAll(' ', '').toLowerCase()
+def osMap = [:]
+osMap['windows'] = ~/.*win.*/
+osMap['linux'] = ~/.*linux.*/
+osMap['MACOSX'] = ~/.*darwin.*/
+
+def platform = osMap.find { osName ==~ it.value }?.key
+def arch = System.properties['os.arch'] ==~ /.*64.*/ ? 'x86_64' : 'i386'
+def currentPlatformArch = "${platform}-${arch}".toString()
+
+repositories {
+    maven {
+        url 'https://maven.aliyun.com/nexus/content/groups/public/'
+    }
+    mavenCentral()
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src']
+        }
+    }
+}
+
+sourceCompatibility = 17
+targetCompatibility = 17
+
+dependencies {
+    implementation group: 'org.bytedeco', name: 'javacpp', version: '1.5.9'
+}
+
+jar {
+    manifest {
+        attributes "Main-Class": mainClassName
+    }
+    from {
+        configurations.runtimeClasspath.collect {
+            it.isDirectory() ? it : zipTree(it)
+        }
+    }
+    zip64 true
+}
+
+tasks.withType(Jar) {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    destinationDir = file("$rootDir/output")
+}
+
+task prepare(type: Copy) {
+    from configurations.runtimeClasspath, cppH
+    into 'src'
+}
+
+task initDir {
+    ant.mkdir dir: 'output'
+}
+
+prepare.dependsOn initDir
+
+task genJNISo(type: Exec) {
+    workingDir = 'src'
+    commandLine 'java', '-jar', 'javacpp-1.5.9.jar', mainClassName + '.java'
+}
+
+task cleanJNISo {
+    if (new File('src/' + currentPlatformArch).exists()) {
+        ant.move(file: 'src/' + currentPlatformArch + '/libjni' + mainClassName + '.so', todir: 'output')
+        ant.delete(dir: 'src/' + currentPlatformArch)
+    }
+    ant.delete(dir: 'src', includes: '**/*.class')
+    ant.delete(dir: 'src', includes: '**/*.h')
+    ant.delete(dir: 'src', includes: '**/*.jar')
+}
+
+/**
+ * 1. gradle jar
+ * 2. gradle prepare
+ * 3. cd src && java -jar javacpp-1.5.9.jar MyLib.java
+ * 4. gradle cleanJNISo
+ * 5. cd output && java -jar javacpp_build_template.jar
+ */
